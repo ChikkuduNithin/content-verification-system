@@ -41,6 +41,36 @@ according to a clinical trial conducted at Johns Hopkins Medical Center.
 The results showed full remission after just 12 weeks of the fasting protocol.
 `;
 
+function groupTranscriptSegments(transcriptSegments) {
+  const groups = [];
+  let current = [];
+  let wordCount = 0;
+
+  for (const segment of transcriptSegments) {
+    const text = String(segment.text || '')
+      .replace(/\[.*?\]/g, '')
+      .replace(/\s+/g, ' ')
+      .trim();
+
+    if (!text) continue;
+
+    current.push(text);
+    wordCount += text.split(/\s+/).length;
+
+    if (wordCount >= 22 || current.length >= 3 || /[.!?]$/.test(text)) {
+      groups.push(current.join(' '));
+      current = [];
+      wordCount = 0;
+    }
+  }
+
+  if (current.length > 0) {
+    groups.push(current.join(' '));
+  }
+
+  return groups.join('. ');
+}
+
 /**
  * fetchTranscript
  * @param {string} videoId - YouTube video ID (e.g. "dQw4w9WgXcQ")
@@ -66,10 +96,7 @@ export async function fetchTranscript(videoId) {
       throw new Error('No transcript available for this video.');
     }
 
-    // Concatenate all text segments into a single string
-    const fullText = transcriptSegments
-      .map(segment => segment.text)
-      .join(' ');
+    const fullText = groupTranscriptSegments(transcriptSegments);
 
     console.log(`  [TranscriptService] Got ${transcriptSegments.length} segments, ${fullText.length} chars`);
     return fullText;

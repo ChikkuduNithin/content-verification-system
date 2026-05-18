@@ -1,139 +1,188 @@
 /**
  * services/scrapingService.js
- * ───────────────────────────
- * For each claim extracted from the transcript, this service:
- *   1. Converts the claim into a search query
- *   2. Sends the query to DuckDuckGo's HTML endpoint (no API key needed)
- *   3. Uses cheerio to parse out titles + snippets from top results
- *   4. Returns an array of { title, snippet, url } evidence objects
  *
- * Fallback: If scraping fails (network issues, rate limits, etc.),
- * the service returns a set of mock evidence so the pipeline continues.
+ * Builds relevant web evidence for each extracted claim.
+ * Primary source: DuckDuckGo HTML search.
+ * Backup source: Gemini Grounding with Google Search, when GEMINI_API_KEY is set.
  */
 
 import axios from 'axios';
 import * as cheerio from 'cheerio';
+import dotenv from 'dotenv';
+import { dirname, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
-// ── Constants ─────────────────────────────────────────────────────────────────
+const serviceDir = dirname(fileURLToPath(import.meta.url));
+dotenv.config({ path: resolve(serviceDir, '../.env') });
 
 const SEARCH_BASE_URL = 'https://html.duckduckgo.com/html/';
-const MAX_RESULTS = 3;          // Top N results to extract per claim
-const REQUEST_TIMEOUT_MS = 8000; // Bail out after 8 seconds
+const MAX_RESULTS = 3;
+const REQUEST_TIMEOUT_MS = 8000;
+const GEMINI_API_KEY = (process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY || '').trim();
+const GEMINI_MODEL = process.env.GEMINI_MODEL || 'gemini-2.5-flash-lite';
+const GEMINI_API_BASE_URL = (process.env.GEMINI_API_BASE_URL || 'https://generativelanguage.googleapis.com/v1beta').replace(/\/$/, '');
 
-// Realistic browser User-Agent to avoid being blocked
-const USER_AGENT =
-  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) ' +
-  'AppleWebKit/537.36 (KHTML, like Gecko) ' +
-  'Chrome/120.0.0.0 Safari/537.36';
+const USER_AGENT = 'Mozilla/5.0';
 
-// ── Helpers ───────────────────────────────────────────────────────────────────
-
-/**
- * buildSearchQuery
- * Trims punctuation and filler from the claim to create a clean search query.
- * E.g. "Scientists found that coffee reduces diabetes by 25%"
- *   → "Scientists found coffee reduces diabetes 25%"
- */
 function buildSearchQuery(claim) {
-  return claim
-    .replace(/["""'']/g, '')          // remove quotation marks
-    .replace(/\b(that|the|a|an|is|are|was|were|be|been|being)\b/gi, '')
-    .replace(/\s+/g, ' ')
-    .trim()
-    .slice(0, 120);                    // DuckDuckGo handles ~120 chars well
+  const lower = claim.toLowerCase();
+
+  if (lower.includes('cgpa')) {
+    const terms = ['CGPA'];
+    if (/\b(shortlist|shortlisted|shortlisting)\b/i.test(claim)) terms.push('shortlisting');
+    if (/\bplacement|placements|campus\b/i.test(claim)) terms.push('campus placements');
+    if (/\bcompany|companies\b/i.test(claim)) terms.push('companies');
+    if (/\bminimum|criteria|cutoff|cut-off\b/i.test(claim)) terms.push('minimum criteria');
+    if (/\bonline assessment|assessment\b/i.test(claim)) terms.push('online assessment');
+    if (/\binterview|interviews\b/i.test(claim)) terms.push('interviews');
+    if (/\bstartup|startups\b/i.test(claim)) terms.push('startups');
+    return [...new Set(terms)].join(' ');
+  }
+
+  if (/\bproof of work|projects?|internships?|experience\b/i.test(claim)) {
+    return 'proof of work projects internship experience hiring recruiters';
+  }
+
+  const stopWords = new Set([
+    'about', 'again', 'also', 'and', 'are', 'because', 'been', 'being', 'but',
+    'can', 'could', 'did', 'does', 'for', 'from', 'had', 'has', 'have', 'how',
+    'into', 'just', 'know', 'like', 'make', 'most', 'not', 'only', 'our', 'out',
+    'really', 'right', 'same', 'she', 'should', 'some', 'something', 'stuff',
+    'that', 'the', 'their', 'then', 'there', 'they', 'this', 'those', 'through',
+    'too', 'under', 'very', 'via', 'was', 'were', 'what', 'when', 'where',
+    'which', 'while', 'who', 'will', 'with', 'you', 'your',
+  ]);
+
+  return [...new Set(claim.toLowerCase().match(/[a-z0-9]+/g) || [])]
+    .filter(word => word.length > 2 && !stopWords.has(word))
+    .slice(0, 10)
+    .join(' ');
 }
 
-/**
- * generateMockEvidence
- * Returns plausible-looking mock evidence when real scraping is unavailable.
- * Keeps the pipeline runnable in offline / rate-limited environments.
- */
-function generateMockEvidence(claim) {
-  const shortClaim = claim.slice(0, 60);
+function generateNoEvidenceResult(claim) {
   return [
     {
-      title: `Fact Check: "${shortClaim}..."`,
-      snippet: `Researchers and fact-checkers have examined claims similar to this one. The evidence is mixed, with some studies supporting partial aspects while others raise methodological concerns about the data sources cited.`,
-      url: 'https://example-factcheck.org/article/1',
-    },
-    {
-      title: `Scientific Analysis: Health Claims Under Review`,
-      snippet: `Multiple peer-reviewed studies have looked at this topic. Experts caution that correlation does not imply causation, and that sample sizes and study design matter significantly when interpreting such results.`,
-      url: 'https://example-science.org/review/health-claims',
-    },
-    {
-      title: `Medical Community Response to Viral Health Claims`,
-      snippet: `Healthcare professionals urge caution when evaluating health information from non-peer-reviewed sources. Consult a qualified medical professional before making health decisions based on online content.`,
-      url: 'https://example-health.org/viral-claims',
+      title: 'No relevant web evidence found',
+      snippet: `Search did not return reliable evidence directly addressing this claim: "${claim.slice(0, 140)}".`,
+      url: '',
     },
   ];
 }
 
-// ── Main Export ───────────────────────────────────────────────────────────────
+function getGeminiText(data) {
+  return data.candidates?.[0]?.content?.parts
+    ?.map(part => part.text || '')
+    .join('')
+    .trim() || '';
+}
 
-/**
- * fetchEvidenceForClaim
- * @param {string} claim - A factual sentence extracted from the transcript
- * @returns {Promise<Array<{ title: string, snippet: string, url: string }>>}
- */
+function getGroundingSources(data) {
+  return data.candidates?.[0]?.groundingMetadata?.groundingChunks
+    ?.map(chunk => chunk.web)
+    .filter(Boolean) || [];
+}
+
+async function fetchDuckDuckGoEvidence(query) {
+  const response = await axios.get(SEARCH_BASE_URL, {
+    params: { q: query, kl: 'us-en' },
+    headers: {
+      'User-Agent': USER_AGENT,
+      'Accept': 'text/html',
+    },
+    timeout: REQUEST_TIMEOUT_MS,
+  });
+
+  const $ = cheerio.load(response.data);
+  const results = [];
+
+  $('.result__body').each((i, el) => {
+    if (results.length >= MAX_RESULTS) return false;
+
+    const titleEl = $(el).find('.result__a');
+    const snippetEl = $(el).find('.result__snippet');
+    const urlEl = $(el).find('.result__url');
+
+    const title = titleEl.text().trim();
+    const snippet = snippetEl.text().trim();
+    const url = urlEl.text().trim() || titleEl.attr('href') || '';
+
+    if (title && snippet) {
+      results.push({ title, snippet, url });
+    }
+  });
+
+  return results;
+}
+
+async function fetchGroundedEvidenceForClaim(claim) {
+  if (!GEMINI_API_KEY) return [];
+
+  const url = new URL(`${GEMINI_API_BASE_URL}/models/${GEMINI_MODEL}:generateContent`);
+  url.searchParams.set('key', GEMINI_API_KEY);
+
+  const prompt = `Find current web evidence relevant to this claim.
+
+Claim: "${claim}"
+
+Write 2-3 concise sentences summarizing what the search results say. Focus only on evidence that directly helps verify or dispute the claim.`;
+
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      contents: [{ parts: [{ text: prompt }] }],
+      tools: [{ google_search: {} }],
+      generationConfig: {
+        temperature: 0.2,
+        maxOutputTokens: 320,
+        thinkingConfig: { thinkingBudget: 0 },
+      },
+    }),
+  });
+
+  if (!response.ok) {
+    const body = await response.text();
+    throw new Error(`Gemini grounding responded with ${response.status}: ${body.slice(0, 180)}`);
+  }
+
+  const data = await response.json();
+  const summary = getGeminiText(data);
+  const sources = getGroundingSources(data);
+
+  if (!summary || sources.length === 0) return [];
+
+  return sources.slice(0, MAX_RESULTS).map((source, index) => ({
+    title: source.title || `Grounded source ${index + 1}`,
+    snippet: summary,
+    url: source.uri || '',
+  }));
+}
+
 export async function fetchEvidenceForClaim(claim) {
   const query = buildSearchQuery(claim);
   console.log(`  [ScrapingService] Query: "${query.slice(0, 80)}..."`);
 
   try {
-    // ── Send POST to DuckDuckGo HTML endpoint ──────────────────────────────
-    // DuckDuckGo's HTML interface is more scrape-friendly than Google
-    const response = await axios.post(
-      SEARCH_BASE_URL,
-      new URLSearchParams({ q: query, kl: 'us-en' }).toString(),
-      {
-        headers: {
-          'User-Agent': USER_AGENT,
-          'Content-Type': 'application/x-www-form-urlencoded',
-          'Accept': 'text/html',
-        },
-        timeout: REQUEST_TIMEOUT_MS,
-      }
-    );
-
-    // ── Parse HTML with cheerio ────────────────────────────────────────────
-    const $ = cheerio.load(response.data);
-    const results = [];
-
-    // DuckDuckGo HTML results live inside .result__body divs
-    // Each result has:
-    //   .result__title  → anchor with title text
-    //   .result__snippet → paragraph with snippet text
-    //   .result__url    → span with the display URL
-
-    $('.result__body').each((i, el) => {
-      if (results.length >= MAX_RESULTS) return false; // cheerio's "break"
-
-      const titleEl = $(el).find('.result__a');
-      const snippetEl = $(el).find('.result__snippet');
-      const urlEl = $(el).find('.result__url');
-
-      const title = titleEl.text().trim();
-      const snippet = snippetEl.text().trim();
-      const url = urlEl.text().trim() || titleEl.attr('href') || '';
-
-      // Only include results with meaningful content
-      if (title && snippet) {
-        results.push({ title, snippet, url });
-      }
-    });
-
-    if (results.length === 0) {
-      console.warn('  [ScrapingService] No results parsed, using mock evidence');
-      return generateMockEvidence(claim);
+    const results = await fetchDuckDuckGoEvidence(query);
+    if (results.length > 0) {
+      console.log(`  [ScrapingService] Got ${results.length} DuckDuckGo evidence results`);
+      return results;
     }
-
-    console.log(`  [ScrapingService] Got ${results.length} evidence results`);
-    return results;
-
+    console.warn('  [ScrapingService] No DuckDuckGo results parsed, trying Gemini grounding');
   } catch (err) {
-    // Network error, timeout, or parsing failure — fall back gracefully
-    console.warn(`  [ScrapingService] Scraping failed (${err.message}), using mock evidence`);
-    return generateMockEvidence(claim);
+    console.warn(`  [ScrapingService] DuckDuckGo scraping failed (${err.message}), trying Gemini grounding`);
   }
+
+  try {
+    const groundedResults = await fetchGroundedEvidenceForClaim(claim);
+    if (groundedResults.length > 0) {
+      console.log(`  [ScrapingService] Got ${groundedResults.length} grounded Google results`);
+      return groundedResults;
+    }
+    console.warn('  [ScrapingService] Gemini grounding returned no sources');
+  } catch (err) {
+    console.warn(`  [ScrapingService] Gemini grounding failed (${err.message})`);
+  }
+
+  return generateNoEvidenceResult(claim);
 }

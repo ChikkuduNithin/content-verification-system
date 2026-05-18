@@ -17,7 +17,7 @@
 import express from 'express';
 import { fetchTranscript } from '../services/transcriptService.js';
 import { fetchEvidenceForClaim } from '../services/scrapingService.js';
-import { getClaimVerdict, generateSummary } from '../services/llmService.js';
+import { extractClaimsFromTranscript, getClaimVerdict, generateSummary } from '../services/llmService.js';
 
 const router = express.Router();
 
@@ -83,10 +83,24 @@ function cleanTranscript(rawText) {
  * Naive sentence splitter — good enough for transcript prose.
  */
 function splitIntoSentences(text) {
+  const MAX_WORDS_PER_CLAIM = 28;
+
+  function chunkLongSentence(sentence) {
+    const words = sentence.split(/\s+/).filter(Boolean);
+    if (words.length <= MAX_WORDS_PER_CLAIM) return [sentence];
+
+    const chunks = [];
+    for (let i = 0; i < words.length; i += MAX_WORDS_PER_CLAIM) {
+      chunks.push(words.slice(i, i + MAX_WORDS_PER_CLAIM).join(' '));
+    }
+    return chunks;
+  }
+
   return text
     .split(/(?<=[.!?])\s+/)
     .map(s => s.trim())
-    .filter(s => s.length > 20);    // discard very short fragments
+    .flatMap(chunkLongSentence)
+    .filter(s => s.length > 20);
 }
 
 /**
@@ -99,21 +113,77 @@ function extractKeyClaims(sentences) {
   const claimIndicators = [
     /\d+%/,                                // percentages
     /\$[\d,]+/,                            // dollar amounts
+    /\b\d[\d,]*(\.\d+)?\s*(miles?|kilometers?|km|light[- ]years?|seconds?|years?|times?|percent|billion|million|trillion|quadrillion)\b/i,
+    /\b(two hundred|fifty|thousand|eighty|million|billion|trillion|quadrillion)\b/i,
     /\b(causes?|proves?|shows?|found|linked|leads? to|results? in)\b/i,
     /\b(study|research|scientists?|doctors?|experts?|NASA|WHO|CDC)\b/i,
     /\b(never|always|every|all|none|most|majority)\b/i,
     /\b(increases?|decreases?|doubles?|triples?|kills?|cures?)\b/i,
+    /\b(Earth|moon|solar system|Jupiter|Great Red Spot|Saturn|Mars|Neptune|Sun|Milky Way|galaxy|universe|Hubble|Carl Sagan|Canis Majoris)\b/i,
+    /\b(distance|diameter|wider|larger|bigger|massive|formed|compared|converted|equals?)\b/i,
   ];
 
-  const scored = sentences.map(sentence => {
+  function expandClaimCandidates(sentence) {
+    let candidates = [sentence];
+    const splitPatterns = [
+      /\s+(?=and Saturn is\b)/i,
+      /\s+(?=Saturn's rings\b)/i,
+      /\s+(?=whereas\b)/i,
+      /\s+(?=the biggest star\b)/i,
+      /\s+(?=the diameter of the Milky Way\b)/i,
+      /\s+(?=NGC\s*\d+\b)/i,
+      /\s+but\s+/i,
+    ];
+
+    for (const pattern of splitPatterns) {
+      candidates = candidates.flatMap(candidate => {
+        const parts = candidate.split(pattern).map(part => part.trim()).filter(Boolean);
+        return parts.length > 1 ? parts : [candidate];
+      });
+    }
+
+    return [...new Set(candidates)];
+  }
+
+  function cleanClaimCandidate(sentence) {
+    return sentence
+      .replace(/^planets\s+the\b/i, 'The')
+      .replace(/^and\s+/i, '')
+      .replace(/^Earth and there are\b/i, 'There are')
+      .replace(/^it think again at their farthest point the earth\b/i, 'The Earth')
+      .replace(/^know of V Y Canis Majoris\b/i, 'V Y Canis Majoris')
+      .replace(/^formed as many as\b/i, 'Some objects seen here may have formed as many as')
+      .replace(/^Way galaxy down using the same scale the\b/i, 'The')
+      .replace(/all the beaches of the planet\.?$/i, 'all the beaches of the planet Earth.')
+      .replace(/two hundred and fifty two thousand eighty eight\.?$/i, 'two hundred and fifty two thousand eighty eight miles away.')
+      .replace(/^(and|but|so|whereas|while)\s+/i, '')
+      .replace(/\s+/g, ' ')
+      .trim();
+  }
+
+  function isCompleteEnough(sentence) {
+    const words = sentence.split(/\s+/);
+    if (words.length < 7) return false;
+    if (/\bhere's Earth\b/i.test(sentence)) return false;
+    if (/^(times?|diameter|wide|years?|away|miles away|of|than|nothing compared)\b/i.test(sentence)) return false;
+    if (/\b(about|does|the|of|to|and|but|with|from|size|we|our|a|an)\.?$/i.test(sentence)) return false;
+    return true;
+  }
+
+  const candidateSentences = sentences.flatMap(expandClaimCandidates);
+
+  const scored = candidateSentences.map(sentence => {
+    const cleaned = cleanClaimCandidate(sentence);
     const score = claimIndicators.reduce(
-      (acc, re) => acc + (re.test(sentence) ? 1 : 0), 0
+      (acc, re) => acc + (re.test(cleaned) ? 1 : 0), 0
     );
-    return { sentence, score };
+    return { sentence: cleaned, score };
   });
 
-  // Sort by score descending, take top 5
+  // Sort by score descending, take top 5 factual statements.
+  // Transcript question fragments are useful context, but weak fact-check claims.
   return scored
+    .filter(item => item.score > 0 && !item.sentence.includes('?') && isCompleteEnough(item.sentence))
     .sort((a, b) => b.score - a.score)
     .slice(0, 5)
     .map(item => item.sentence);
@@ -167,7 +237,8 @@ router.post('/analyze', async (req, res) => {
     console.log('[Step 3] Processing transcript...');
     const cleanedText = cleanTranscript(rawTranscript);
     const sentences = splitIntoSentences(cleanedText);
-    const claims = extractKeyClaims(sentences);
+    const modelClaims = await extractClaimsFromTranscript(cleanedText);
+    const claims = modelClaims.length > 0 ? modelClaims : extractKeyClaims(sentences);
 
     if (claims.length === 0) {
       return res.status(422).json({

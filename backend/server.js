@@ -9,6 +9,7 @@ import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
 import analyzeRouter from './controllers/analyzeController.js';
+import { getLLMMode } from './services/llmService.js';
 
 // Load environment variables from .env file
 dotenv.config();
@@ -41,6 +42,6 @@ app.get('/health', (_req, res) => {
 
 app.listen(PORT, () => {
   console.log(`\n🚀 YouTube Verifier Backend running on http://localhost:${PORT}`);
-  console.log(`   Mode: ${process.env.USE_MOCK_LLM === 'true' ? '🤖 Mock LLM' : '✨ OpenAI'}`);
+  console.log(`   Mode: ${getLLMMode()}`);
   console.log(`   Transcript: ${process.env.USE_MOCK_TRANSCRIPT === 'true' ? '📄 Mock' : '🎬 YouTube API'}\n`);
 });

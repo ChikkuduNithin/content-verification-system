@@ -48,7 +48,7 @@ function ConfidenceBar({ confidence }) {
 }
 
 function ClaimCard({ index, claim, verdict, confidence, reasoning, evidence }) {
-  const [evidenceOpen, setEvidenceOpen] = useState(false);
+  const [evidenceOpen, setEvidenceOpen] = useState(true);
   const config = VERDICT_CONFIG[verdict] || VERDICT_CONFIG.Uncertain;
 
   return (
