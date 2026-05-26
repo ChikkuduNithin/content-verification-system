@@ -47,7 +47,21 @@ function ConfidenceBar({ confidence }) {
   );
 }
 
-function ClaimCard({ index, claim, verdict, confidence, reasoning, evidence }) {
+function formatTimestamp(seconds) {
+  if (seconds === undefined || seconds === null || isNaN(seconds)) return '0:00';
+  const hrs = Math.floor(seconds / 3600);
+  const mins = Math.floor((seconds % 3600) / 60);
+  const secs = seconds % 60;
+  
+  const paddedSecs = String(secs).padStart(2, '0');
+  if (hrs > 0) {
+    const paddedMins = String(mins).padStart(2, '0');
+    return `${hrs}:${paddedMins}:${paddedSecs}`;
+  }
+  return `${mins}:${paddedSecs}`;
+}
+
+function ClaimCard({ index, claim, verdict, confidence, reasoning, evidence, timestamp, videoId }) {
   const [evidenceOpen, setEvidenceOpen] = useState(true);
   const config = VERDICT_CONFIG[verdict] || VERDICT_CONFIG.Uncertain;
 
@@ -55,7 +69,21 @@ function ClaimCard({ index, claim, verdict, confidence, reasoning, evidence }) {
     <article className={`claim-card ${config.cls}`}>
       {/* ── Card Header ─────────────────────────────────── */}
       <div className="claim-header">
-        <div className="claim-index">#{index}</div>
+        <div className="claim-index-group">
+          <div className="claim-index">#{index}</div>
+          {timestamp !== undefined && timestamp !== null && (
+            <a
+              href={`https://www.youtube.com/watch?v=${videoId}&t=${timestamp}s`}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="timestamp-link"
+              title="Jump to this claim in the video"
+            >
+              <span className="timestamp-icon">▶</span>
+              <span>{formatTimestamp(timestamp)}</span>
+            </a>
+          )}
+        </div>
         <div className={`verdict-badge ${config.cls}`}>
           <span className="verdict-icon" aria-hidden="true">{config.icon}</span>
           <span>{config.label}</span>

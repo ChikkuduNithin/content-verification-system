@@ -190,6 +190,42 @@ function extractKeyClaims(sentences) {
 }
 
 /**
+ * findTimestampForClaim
+ * Finds the best-matching transcript segment for the claim and returns the offset in seconds.
+ */
+function findTimestampForClaim(claim, segments) {
+  if (!segments || segments.length === 0) return 0;
+
+  // Heuristic average duration to check if offset/duration are in milliseconds
+  const avgDuration = segments.reduce((sum, s) => sum + s.duration, 0) / segments.length;
+  const isMs = avgDuration > 100;
+
+  const claimWords = claim.toLowerCase().match(/\w+/g) || [];
+  if (claimWords.length === 0) return 0;
+
+  let bestSegment = segments[0];
+  let maxOverlap = -1;
+
+  for (const seg of segments) {
+    const segText = seg.text.toLowerCase();
+    let overlap = 0;
+    for (const word of claimWords) {
+      if (segText.includes(word)) {
+        overlap++;
+      }
+    }
+
+    if (overlap > maxOverlap) {
+      maxOverlap = overlap;
+      bestSegment = seg;
+    }
+  }
+
+  const rawOffset = bestSegment ? bestSegment.offset : 0;
+  return isMs ? Math.round(rawOffset / 1000) : Math.round(rawOffset);
+}
+
+/**
  * aggregateResults
  * Computes an overall credibility score from individual verdicts
  * and confidence levels.
@@ -231,7 +267,7 @@ router.post('/analyze', async (req, res) => {
   try {
     // ── Step 2: Fetch transcript ────────────────────────────────────────────
     console.log('[Step 2] Fetching transcript...');
-    const rawTranscript = await fetchTranscript(videoId);
+    const { text: rawTranscript, segments } = await fetchTranscript(videoId);
 
     // ── Step 3: Process transcript → extract claims ─────────────────────────
     console.log('[Step 3] Processing transcript...');
@@ -264,9 +300,13 @@ router.post('/analyze', async (req, res) => {
       // Step 5: Ask LLM to evaluate claim vs evidence
       const verdict = await getClaimVerdict(claim, evidence);
 
+      // Match claim back to its transcript segment timestamp
+      const timestamp = findTimestampForClaim(claim, segments);
+
       results.push({
         claim,
         evidence,   // top snippets used as context
+        timestamp,
         ...verdict, // { verdict, confidence, reasoning }
       });
     }

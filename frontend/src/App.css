@@ -900,6 +900,63 @@ body {
   margin: 0 auto;
 }
 
+/* ── Added PDF and Timestamp styles ─────────────────────────────────────────── */
+
+.claim-index-group {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.timestamp-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  background: var(--bg-3);
+  border: 1px solid var(--border);
+  color: var(--txt-secondary);
+  font-family: var(--font-mono);
+  font-size: 0.68rem;
+  text-decoration: none;
+  padding: 0.15rem 0.5rem;
+  border-radius: var(--radius);
+  transition: all 0.2s ease;
+  font-weight: 700;
+}
+
+.timestamp-link:hover {
+  background: var(--accent-glow);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.timestamp-icon {
+  font-size: 0.6rem;
+  color: var(--red);
+}
+
+.pdf-btn {
+  background: var(--accent);
+  border: 1px solid var(--accent);
+  color: #fff;
+  border-radius: var(--radius);
+  padding: 0.6rem 1.2rem;
+  font-family: var(--font-mono);
+  font-size: 0.78rem;
+  font-weight: 700;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s, transform 0.1s;
+}
+
+.pdf-btn:hover {
+  background: #4a6ce0;
+  border-color: #4a6ce0;
+}
+
+.pdf-btn:active {
+  transform: scale(0.98);
+}
+
 /* ── Responsive ──────────────────────────────────────────────────────────────── */
 
 @media (max-width: 640px) {
