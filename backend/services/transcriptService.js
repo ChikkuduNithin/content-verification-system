@@ -12,7 +12,7 @@
  */
 
 // Note: Import directly from ESM build due to package export map quirk in Node ESM
-import { YoutubeTranscript } from 'youtube-transcript/dist/youtube-transcript.esm.js';
+import { YoutubeTranscript } from 'youtube-transcript';
 
 // ── Mock transcript for development / testing ─────────────────────────────────
 // A realistic excerpt about nutrition/health — good for generating verifiable claims
