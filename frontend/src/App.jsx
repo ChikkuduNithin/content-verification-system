@@ -55,10 +55,27 @@ function App() {
     }
   }
 
-  const handleSelectHistory = (selectedUrl) => {
-    setUrl(selectedUrl);
+  const handleSelectHistory = async (historyId) => {
     setShowHistory(false);
-    handleAnalyze(selectedUrl);
+    setLoading(true);
+    setError(null);
+    setResult(null);
+
+    try {
+      const response = await fetch(`/api/history/${historyId}`);
+      const data = await response.json();
+      
+      if (!response.ok) {
+        throw new Error(data.error || `Server error: ${response.status}`);
+      }
+      
+      setUrl(data.url);
+      setResult(data);
+    } catch (err) {
+      setError(err.message || 'Failed to load history item.');
+    } finally {
+      setLoading(false);
+    }
   };
 
   return (

@@ -55,4 +55,16 @@ router.get('/history', async (_req, res) => {
   }
 });
 
+// ── Route: GET /api/history/:id ────────────────────────────────────────────
+router.get('/history/:id', async (req, res) => {
+  try {
+    const analysis = await Analysis.findById(req.params.id);
+    if (!analysis) return res.status(404).json({ error: 'Analysis not found' });
+    res.json(analysis);
+  } catch (err) {
+    console.error('[Controller] History fetch single error:', err.message);
+    res.status(500).json({ error: 'Failed to fetch history record.' });
+  }
+});
+
 export default router;

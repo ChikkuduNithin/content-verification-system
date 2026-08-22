@@ -39,7 +39,7 @@ export default function HistoryPanel({ onSelectHistory, onClose }) {
           {!loading && !error && history.length > 0 && (
             <div className="history-list">
               {history.map((item, i) => (
-                <div key={i} className="history-item" onClick={() => onSelectHistory(item.url)}>
+                <div key={i} className="history-item" onClick={() => onSelectHistory(item._id)}>
                   <div className="history-item-top">
                     <span className="history-vid">Video: {item.videoId}</span>
                     <span className="history-score">Score: {item.overallScore}/100</span>
