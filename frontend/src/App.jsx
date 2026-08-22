@@ -14,12 +14,14 @@ import { useState } from 'react';
 import UrlInput from './components/UrlInput.jsx';
 import ResultsPanel from './components/ResultsPanel.jsx';
 import LoadingScreen from './components/LoadingScreen.jsx';
+import HistoryPanel from './components/HistoryPanel.jsx';
 
 function App() {
   const [url, setUrl] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [result, setResult] = useState(null);
+  const [showHistory, setShowHistory] = useState(false);
 
   /**
    * handleAnalyze
@@ -53,6 +55,12 @@ function App() {
     }
   }
 
+  const handleSelectHistory = (selectedUrl) => {
+    setUrl(selectedUrl);
+    setShowHistory(false);
+    handleAnalyze(selectedUrl);
+  };
+
   return (
     <div className="app">
       {/* ── Header ──────────────────────────────────────── */}
@@ -65,7 +73,12 @@ function App() {
               <span className="logo-sub">YouTube Fact Verification System</span>
             </div>
           </div>
-          <div className="header-badge">AI-Powered</div>
+          <div style={{ display: 'flex', gap: '1rem', alignItems: 'center' }}>
+            <button className="btn-history" onClick={() => setShowHistory(true)}>
+              History
+            </button>
+            <div className="header-badge">AI-Powered</div>
+          </div>
         </div>
       </header>
 
@@ -112,6 +125,13 @@ function App() {
           <ResultsPanel result={result} onReset={() => { setResult(null); setUrl(''); }} />
         )}
       </main>
+
+      {showHistory && (
+        <HistoryPanel 
+          onClose={() => setShowHistory(false)} 
+          onSelectHistory={handleSelectHistory} 
+        />
+      )}
 
       {/* ── Footer ──────────────────────────────────────── */}
       <footer className="site-footer">
