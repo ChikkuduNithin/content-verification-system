@@ -1,196 +1,113 @@
-# VeriTube — YouTube Content Verification System
+# VeriTube: YouTube Content Verification System
 
-A full-stack MERN-style application that extracts key factual claims from YouTube video transcripts and verifies them against web evidence using an LLM.
+VeriTube is a full-stack web application that automatically extracts, fact-checks, and summarizes factual claims from YouTube videos. It uses heuristic analysis to identify candidate claims from transcripts, LLMs to refine these claims, and agentic web search to gather evidence and render a verdict.
+
+## Project Overview
+
+The system takes a YouTube URL as input, retrieves its transcript, and executes a rigorous verification pipeline. It evaluates the credibility of the video's core statements against external evidence and provides an easy-to-understand credibility score.
 
 ## Architecture
 
-```
-youtube-verifier/
-├── backend/                    # Node.js + Express
-│   ├── server.js               # Entry point, Express setup
-│   ├── controllers/
-│   │   └── analyzeController.js  # Pipeline orchestrator + routes
-│   ├── services/
-│   │   ├── transcriptService.js  # Fetches YouTube transcript
-│   │   ├── scrapingService.js    # Fetches web evidence per claim
-│   │   └── llmService.js         # OpenAI GPT calls + mock
-│   ├── .env.example
-│   └── package.json
-│
-└── frontend/                   # React + Vite
-    ├── src/
-    │   ├── App.jsx             # Root, state management
-    │   ├── App.css             # All styles (dark industrial theme)
-    │   ├── main.jsx            # ReactDOM entry
-    │   └── components/
-    │       ├── UrlInput.jsx    # URL form with validation
-    │       ├── LoadingScreen.jsx  # Animated pipeline progress
-    │       ├── ResultsPanel.jsx   # Score + summary display
-    │       └── ClaimCard.jsx   # Per-claim verdict card
-    ├── index.html
-    ├── vite.config.js
-    └── package.json
+```text
+HTTP Request
+     ↓
+analyzeController.js
+     ↓
+verificationPipeline.js (Orchestrator)
+     ↓
+┌───────────────────────────────────────────┐
+│ Verification Pipeline                     │
+│                                           │
+│ 1. Extract video ID                       │
+│ 2. Fetch transcript                       │
+│ 3. Clean & segment transcript             │
+│ 4. Heuristic claim extraction             │
+│ 5. LLM claim refinement                   │
+│ 6. Evidence gathering agent               │
+│ 7. Claim verification chain               │
+│ 8. Score results                          │
+│ 9. Generate summary                       │
+└───────────────────────────────────────────┘
+     ↓
+Analysis Result
+     ↓
+HTTP Response
 ```
 
-## Pipeline (8 Steps)
+## Backend Structure
 
-```
-URL Input
-   ↓
-1. Extract Video ID from URL
-   ↓
-2. Fetch Transcript (youtube-transcript npm / mock)
-   ↓
-3. Process Transcript
-   → Clean text (strip filler, HTML entities, cap 3000 words)
-   → Split into sentences
-   → Score sentences by claim indicators (%, studies, named entities)
-   → Extract top 3–5 claims
-   ↓
-4. For each claim → fetchEvidenceForClaim()
-   → Build search query (strip filler words)
-   → POST to DuckDuckGo HTML endpoint
-   → Cheerio parses title + snippet from top 3 results
-   ↓
-5. For each claim → getClaimVerdict()
-   → Send claim + evidence to GPT-4o-mini
-   → Receive JSON: { verdict, confidence, reasoning }
-   ↓
-6. Aggregate Results
-   → True × confidence → positive score
-   → False × (1 - confidence) → partial score
-   → Uncertain → 50 points
-   → Average → overallScore (0–100)
-   ↓
-7. generateSummary()
-   → LLM writes 2–3 sentence human summary
-   ↓
-8. Return to Frontend
-```
+- `backend/controllers/analyzeController.js`: Thin HTTP controller. Validates the request, delegates to the pipeline, handles status codes, and maintains the analysis history.
+- `backend/pipeline/verificationPipeline.js`: The main application orchestrator coordinating all internal workflows.
+- `backend/pipeline/claimExtractor.js`: Deterministic extraction logic. Segments transcript sentences, scores them heuristically to find candidate claims, and deduplicates/ranks them.
+- `backend/langchain/`: Houses all LLM interactions, tools, and chains.
+  - `chains.js`: Contains LangChain LCEL chains for refining candidate claims into finalized checkable claims, verifying them against gathered evidence, and generating the final summary.
+  - `verificationAgent.js`: The LangGraph ReAct agent responsible for executing evidence gathering tools.
+  - `tools.js`: Definitions for `search_web` and `retrieve_trusted_evidence` tools.
+  - `modelProvider.js`: Resolves the LLM provider (OpenAI, Gemini, Ollama, Mock) from environment variables.
+  - `schemas.js`: Zod schemas for structured LLM outputs.
+- `backend/services/`: External API interaction services.
+  - `transcriptService.js`: Fetches YouTube transcripts (or returns a mock transcript for testing).
+  - `scrapingService.js`: Executes DuckDuckGo web scraping or Gemini grounding to find evidence.
+- `backend/scoring/scoring.js`: Calculates the final credibility score based on individual claim verdicts and confidence intervals.
 
-## Quick Start
+## Claim Extraction
 
-### 1. Backend
+The claim extraction process is intentionally decoupled into two stages for precision and reliability:
 
-```bash
-cd backend
-npm install
-cp .env.example .env
-# Edit .env — set USE_MOCK_LLM=true to skip OpenAI key requirement
-node server.js
-```
+1. **Heuristic Candidate Discovery**: The transcript is parsed and sentences are scored deterministically based on indicators like percentages, measurements, causal language, and attribution. The top candidates (e.g. up to 15) are passed to the next stage.
+2. **LLM Semantic Refinement**: The LLM refines the provided candidates, filtering out subjectivity, resolving context, and emitting fully self-contained atomic claims (e.g. 3-5 claims). The system retains the mapping between the final refined claim and its original candidate source for traceability.
 
-### 2. Frontend
+## Agentic Evidence Gathering
 
-```bash
-cd frontend
-npm install
-npm run dev
-```
+Once claims are extracted, the system uses a ReAct agent to search for evidence:
+`search_web` ↓ `quality assessment` ↓ `trusted evidence escalation (if needed)`
 
-Open http://localhost:5173
+The agent is scoped purely to finding evidence. It does **not** judge the claim. This separation ensures the fact-checking process itself remains predictable and isolated from the retrieval logic.
+
+## Verification
+
+Claim verification is performed by a dedicated chain that reviews a claim alongside the evidence provided by the agent. It returns a structured `True`, `False`, or `Uncertain` verdict, accompanied by a confidence score and a detailed reasoning.
+
+## API
+
+### `POST /api/analyze`
+Analyzes a YouTube video.
+**Request Body**: `{ "url": "https://www.youtube.com/watch?v=..." }`
+**Response**: A structured JSON object containing the overall score, summary, and a list of verified claims with reasoning and timestamp markers.
+
+### `GET /api/history`
+Retrieves a lightweight summary of previously analyzed videos (in-memory).
 
 ## Environment Variables
 
-| Variable             | Default | Description                                      |
-|----------------------|---------|--------------------------------------------------|
-| `PORT`               | 5000    | Backend server port                              |
-| `OPENAI_API_KEY`     | —       | Your OpenAI API key                              |
-| `USE_MOCK_LLM`       | true    | Skip OpenAI calls, use realistic mock responses  |
-| `USE_MOCK_TRANSCRIPT`| false   | Skip YouTube fetch, use built-in sample transcript |
+The backend relies on the following `.env` configuration:
+- `PORT`: Server port (default: 5000)
+- `LLM_PROVIDER`: E.g. `google`, `openai`, `ollama`, `mock`
+- `GOOGLE_API_KEY` or `GEMINI_API_KEY`: API key for Gemini.
+- `OPENAI_API_KEY`: API key for OpenAI.
+- `GEMINI_MODEL`: Model name (default: `gemini-flash-latest`)
+- `SCORING_MODEL`: Scoring formula (`legacy` or `weighted`)
+- `USE_MOCK_TRANSCRIPT`: `true`/`false` for testing without YouTube access.
 
-## API Reference
+## Running Locally
 
-### POST /api/analyze
+1. Install dependencies in the backend and frontend:
+   ```bash
+   cd backend && npm install
+   cd ../frontend && npm install
+   ```
+2. Start the backend:
+   ```bash
+   cd backend
+   npm run dev
+   ```
+3. Start the frontend:
+   ```bash
+   cd frontend
+   npm run dev
+   ```
 
-**Request:**
-```json
-{ "url": "https://www.youtube.com/watch?v=VIDEO_ID" }
-```
+## Design Decisions
 
-**Response:**
-```json
-{
-  "videoId": "VIDEO_ID",
-  "url": "...",
-  "claims": ["claim 1", "claim 2", "..."],
-  "results": [
-    {
-      "claim": "...",
-      "evidence": [
-        { "title": "...", "snippet": "...", "url": "..." }
-      ],
-      "verdict": "True | False | Uncertain",
-      "confidence": 0.82,
-      "reasoning": "1-2 sentence explanation"
-    }
-  ],
-  "overallScore": 55,
-  "summary": "This video contains 5 verifiable claims...",
-  "analyzedAt": "2024-01-15T10:30:00.000Z"
-}
-```
-
-### GET /api/history
-
-Returns lightweight history of past analyses (in-memory, resets on restart).
-
-## Example LLM Prompt
-
-```
-SYSTEM:
-  You are a rigorous fact-checker with expertise in scientific literacy
-  and media analysis.
-
-  Evaluate the CLAIM using ONLY the EVIDENCE provided. Do not use prior
-  knowledge.
-
-  Respond ONLY with a valid JSON object containing exactly:
-    "verdict"    : "True", "False", or "Uncertain"
-    "confidence" : 0.0–1.0
-    "reasoning"  : 1-2 sentence explanation citing specific evidence
-
-USER:
-  CLAIM: "Scientists at Harvard University found that coffee reduces the
-  risk of type 2 diabetes by 25 percent."
-
-  EVIDENCE:
-  [1] Title: "Coffee and Diabetes Risk - Harvard Health"
-      Snippet: "A meta-analysis of 28 studies found both caffeinated and
-                decaffeinated coffee associated with reduced diabetes risk..."
-  [2] Title: "Can Coffee Really Prevent Diabetes?"
-      Snippet: "While some observational studies suggest a protective effect,
-                experts caution that correlation ≠ causation..."
-```
-
-**LLM Response:**
-```json
-{
-  "verdict": "Uncertain",
-  "confidence": 0.58,
-  "reasoning": "Some meta-analyses support an association between coffee
-    consumption and reduced diabetes risk, but the specific 25% figure
-    is not consistently cited and causality remains unestablished."
-}
-```
-
-## Scoring Formula
-
-```
-score = average over all claims of:
-  if verdict == "True"      → confidence × 100
-  if verdict == "False"     → (1 - confidence) × 100
-  if verdict == "Uncertain" → 50
-
-Range: 0–100
-  75–100 → Credible
-  50–74  → Mixed
-  30–49  → Questionable
-  0–29   → Unreliable
-```
-
-## Notes
-
-- **No MongoDB required** — history is stored in-memory. Add Mongoose easily by replacing the `analysisHistory` array in `analyzeController.js`.
-- **DuckDuckGo scraping** may be rate-limited. The service gracefully falls back to mock evidence.
-- **youtube-transcript** works without an API key but requires the video to have captions enabled.
+- **Separation of Deterministic Logic and Agentic Roles**: We avoid creating a single massive ReAct agent to orchestrate the entire flow. Transcript fetching, segmentation, scoring, and candidate extraction are deterministic and fast. LLMs are only utilized when deep semantic understanding or reasoning is required (e.g., candidate refinement, verdict generation). This makes the pipeline more predictable, easier to debug, and cheaper to execute.
+- **Traceability**: Refined claims inherently track their originating candidate sentence. This builds confidence in the system's outputs, preventing AI hallucination of claims not actually present in the source material.

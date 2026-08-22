@@ -28,8 +28,9 @@ const hasUsableGoogleApiKey = Boolean(googleApiKey);
 const configuredProvider = String(process.env.LLM_PROVIDER || '').trim().toLowerCase();
 const forceMock = String(process.env.USE_MOCK_LLM).toLowerCase() === 'true';
 
-// Ensure this fallback line is set to gemini-2.5-flash (or gemini-3.6-flash)
-const GEMINI_MODEL = process.env.GEMINI_MODEL || 'gemini-flash-latest';
+// gemini-3.5-flash-lite: high rate limit free tier
+// Use GEMINI_MODEL in .env to override
+const GEMINI_MODEL = process.env.GEMINI_MODEL || 'gemini-3.5-flash-lite';
 const OLLAMA_BASE_URL = (process.env.OLLAMA_BASE_URL || 'http://localhost:11434').replace(/\/$/, '');
 const OLLAMA_MODEL = process.env.OLLAMA_MODEL || 'qwen2.5:3b';
 

@@ -73,6 +73,8 @@ function extractEvidenceFromMessages(messages) {
   return evidence.slice(0, 5);
 }
 
+const AGENT_TIMEOUT_MS = 30_000;
+
 /**
  * gatherEvidenceForClaim
  * @param {string} claim
@@ -89,9 +91,13 @@ export async function gatherEvidenceForClaim(claim) {
 
   try {
     const activeAgent = await getAgent();
-    const result = await activeAgent.invoke({
+    const agentPromise = activeAgent.invoke({
       messages: [new HumanMessage(`Claim to gather evidence for: "${claim}"`)],
     });
+    const timeoutPromise = new Promise((_, reject) =>
+      setTimeout(() => reject(new Error(`Agent timed out after ${AGENT_TIMEOUT_MS}ms`)), AGENT_TIMEOUT_MS)
+    );
+    const result = await Promise.race([agentPromise, timeoutPromise]);
     const evidence = extractEvidenceFromMessages(result.messages || []);
     if (evidence.length > 0) return { evidence, agentic: true };
     console.warn('  [verificationAgent] Agent returned no usable evidence, falling back');
