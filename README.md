@@ -12,6 +12,30 @@ Recent updates include batch processing for speed, strict anti-hallucination gua
 
 The application employs a multi-stage data pipeline combining deterministic NLP heuristics, LangChain orchestration, and external web APIs. 
 
+### High-Level Flow
+
+```mermaid
+graph TD
+    A([💻 React Frontend]) -->|YouTube URL| B(⚡ Express Backend)
+    
+    subgraph Verification Pipeline
+        direction TB
+        C[1. Fetch YouTube Transcript]
+        D[2. Heuristic & LangChain Refinement]
+        E[3. DuckDuckGo Evidence Scraping]
+        F[4. LangChain Batch Verification]
+        
+        C --> D --> E --> F
+    end
+
+    B --> Verification Pipeline
+    
+    F -->|Save Result| G[(🍃 MongoDB)]
+    F -->|Return Data| A
+```
+
+### Detailed System Architecture
+
 ```mermaid
 graph TD
     %% Styling
