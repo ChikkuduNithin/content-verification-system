@@ -10,30 +10,61 @@ Recent updates include batch processing for speed, strict anti-hallucination gua
 
 ## Architecture
 
-```text
-HTTP Request
-     ↓
-analyzeController.js
-     ↓
-verificationPipeline.js (Orchestrator)
-     ↓
-┌───────────────────────────────────────────┐
-│ Verification Pipeline                     │
-│                                           │
-│ 1. Extract video ID                       │
-│ 2. Fetch transcript                       │
-│ 3. Clean & chunk transcript (sliding win) │
-│ 4. Heuristic claim extraction             │
-│ 5. LLM claim refinement                   │
-│ 6. Sequential evidence gathering          │
-│ 7. LLM Batch claim verification           │
-│ 8. Score results                          │
-│ 9. Generate summary & Save to MongoDB     │
-└───────────────────────────────────────────┘
-     ↓
-Analysis Result
-     ↓
-HTTP Response
+The application employs a multi-stage data pipeline combining deterministic NLP heuristics, LangChain orchestration, and external web APIs. 
+
+```mermaid
+graph TD
+    %% Styling
+    classDef frontend fill:#2a3a7a,stroke:#5b7fff,stroke-width:2px,color:#fff
+    classDef backend fill:#14141c,stroke:#3d3d52,stroke-width:2px,color:#e8e8f0
+    classDef ai fill:#0a3a2a,stroke:#3dd68c,stroke-width:2px,color:#fff
+    classDef external fill:#3a2a2a,stroke:#ff5757,stroke-width:2px,color:#fff
+    classDef db fill:#3a3a2a,stroke:#f5c842,stroke-width:2px,color:#fff
+
+    %% Nodes
+    Client([💻 React Frontend]):::frontend
+    API[API Controller ⚡ Express.js]:::backend
+    
+    subgraph Verification Pipeline [Core Orchestration Engine]
+        direction TB
+        T[1. Transcript Service]:::backend
+        H[2. NLP Heuristic Chunking]:::backend
+        R[3. LangChain Refinement]:::backend
+        S[4. Evidence Scraping]:::backend
+        V[5. LangChain Batch Verification]:::backend
+        SC[6. Scoring & Summarization]:::backend
+    end
+
+    %% External Systems
+    YouTube[(▶️ YouTube API)]:::external
+    DDG[(🔍 DuckDuckGo API)]:::external
+    LLM((🧠 Gemini 3.5 LLM)):::ai
+    DB[(🍃 MongoDB)]:::db
+
+    %% Connections
+    Client -- "POST /api/analyze\n(YouTube URL)" --> API
+    API --> T
+    
+    T -- "Extract Captions" --> YouTube
+    YouTube -. "Raw Transcript" .-> T
+    T --> H
+    
+    H -- "Candidate Sentences" --> R
+    R -- "LCEL Prompt" --> LLM
+    LLM -. "Atomic Claims" .-> R
+    R --> S
+    
+    S -- "Search Queries" --> DDG
+    DDG -. "Web Context" .-> S
+    S --> V
+    
+    V -- "Claims + Evidence" --> LLM
+    LLM -. "JSON Verdicts" .-> V
+    V --> SC
+    
+    SC -- "Save Analysis" --> DB
+    SC --> API
+    API -- "JSON Response" --> Client
 ```
 
 ## Backend Structure
