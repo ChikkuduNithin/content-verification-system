@@ -18,7 +18,7 @@ The application employs a multi-stage data pipeline combining deterministic NLP 
 graph TD
     A([💻 React Frontend]) -->|YouTube URL| B(⚡ Express Backend)
     
-    subgraph Verification Pipeline
+    subgraph VP [Verification Pipeline]
         direction TB
         C[1. Fetch YouTube Transcript]
         D[2. Heuristic & LangChain Refinement]
@@ -28,7 +28,7 @@ graph TD
         C --> D --> E --> F
     end
 
-    B --> Verification Pipeline
+    B --> C
     
     F -->|Save Result| G[(🍃 MongoDB)]
     F -->|Return Data| A
