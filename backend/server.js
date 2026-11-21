@@ -9,26 +9,30 @@ import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
 import mongoose from 'mongoose';
+import path from 'path';
+import fs from 'fs';
+import { fileURLToPath } from 'url';
 import analyzeRouter from './controllers/analyzeController.js';
 import { getProviderLabel } from './langchain/modelProvider.js';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const frontendDist = path.resolve(__dirname, '../frontend/dist');
 
 // Load environment variables from .env file
 dotenv.config();
 
 const app = express();
 const PORT = process.env.PORT || 5000;
-const MONGODB_URI = process.env.MONGODB_URI || 'mongodb://localhost:27017/youtube-verifier';
+const MONGODB_URI = process.env.MONGODB_URI || process.env.MONGO_URL || 'mongodb://localhost:27017/youtube-verifier';
 
 // ── Middleware ────────────────────────────────────────────────────────────────
 
 // Parse incoming JSON request bodies
 app.use(express.json());
 
-// Allow cross-origin requests from the Vite dev server (port 5173)
-app.use(cors({
-  origin: ['http://localhost:5173', 'http://127.0.0.1:5173'],
-  methods: ['GET', 'POST'],
-}));
+// Enable CORS
+app.use(cors());
 
 // ── Routes ────────────────────────────────────────────────────────────────────
 
@@ -40,6 +44,21 @@ app.use('/api', analyzeRouter);
 app.get('/health', (_req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
 });
+
+// Serve frontend static assets if built
+if (fs.existsSync(frontendDist)) {
+  app.use(express.static(frontendDist));
+  app.get('*', (req, res, next) => {
+    if (req.path.startsWith('/api') || req.path === '/health') {
+      return next();
+    }
+    const indexPath = path.join(frontendDist, 'index.html');
+    if (fs.existsSync(indexPath)) {
+      return res.sendFile(indexPath);
+    }
+    next();
+  });
+}
 
 // ── Start Server ──────────────────────────────────────────────────────────────
 

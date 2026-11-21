@@ -28,15 +28,15 @@ const hasUsableGoogleApiKey = Boolean(googleApiKey);
 const configuredProvider = String(process.env.LLM_PROVIDER || '').trim().toLowerCase();
 const forceMock = String(process.env.USE_MOCK_LLM).toLowerCase() === 'true';
 
-// gemini-3.5-flash-lite: high rate limit free tier
+// gemini-2.5-flash-lite: high rate limit free tier
 // Use GEMINI_MODEL in .env to override
-const GEMINI_MODEL = process.env.GEMINI_MODEL || 'gemini-3.5-flash-lite';
+const GEMINI_MODEL = process.env.GEMINI_MODEL || 'gemini-2.5-flash-lite';
 const OLLAMA_BASE_URL = (process.env.OLLAMA_BASE_URL || 'http://localhost:11434').replace(/\/$/, '');
 const OLLAMA_MODEL = process.env.OLLAMA_MODEL || 'qwen2.5:3b';
 
 export const LLM_PROVIDER = forceMock
   ? 'mock'
-  : (configuredProvider || (hasUsableGoogleApiKey ? 'google' : (hasUsableApiKey ? 'openai' : 'ollama')));
+  : (configuredProvider || (hasUsableGoogleApiKey ? 'google' : (hasUsableApiKey ? 'openai' : (process.env.OLLAMA_BASE_URL ? 'ollama' : 'mock'))));
 
 export function isMockMode() {
   return LLM_PROVIDER === 'mock';

@@ -1,0 +1,11 @@
+{
+  "name": "content-verification-system",
+  "version": "1.0.0",
+  "description": "YouTube Content Verification System",
+  "main": "backend/server.js",
+  "type": "module",
+  "scripts": {
+    "build": "cd frontend && npm install && npm run build && cd ../backend && npm install",
+    "start": "node backend/server.js"
+  }
+}

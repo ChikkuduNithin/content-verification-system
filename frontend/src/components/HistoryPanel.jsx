@@ -6,7 +6,7 @@ export default function HistoryPanel({ onSelectHistory, onClose }) {
   const [error, setError] = useState(null);
 
   useEffect(() => {
-    fetch('http://localhost:5000/api/history')
+    fetch('/api/history')
       .then(res => {
         if (!res.ok) throw new Error('Failed to fetch history');
         return res.json();
